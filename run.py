@@ -161,6 +161,7 @@ Examples:
 
   # Login using Selenium with Firefox or Chrome
   python run.py selenium-login --username YOUR_USERNAME --password YOUR_PASSWORD --browser firefox
+  python run.py selenium-login --username YOUR_USERNAME --password YOUR_PASSWORD --browser chrome --debug
   python run.py selenium-fetch --browser chrome --output checkins.csv
 
   # Login to Untappd API (if you have a commercial account)
@@ -226,6 +227,11 @@ Examples:
         action="store_true",
         help="Run with visible browser window (headless by default)",
     )
+    selenium_login_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Debug mode: show the browser window (disables headless mode)",
+    )
 
     # Selenium fetch command
     selenium_fetch_parser = subparsers.add_parser(
@@ -249,6 +255,11 @@ Examples:
         "--headed",
         action="store_true",
         help="Run with visible browser window (headless by default)",
+    )
+    selenium_fetch_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Debug mode: show the browser window (disables headless mode)",
     )
 
     # Original API login command
@@ -505,11 +516,12 @@ def handle_selenium_login(args):
     """Handle login using Selenium automation."""
     print(f"Authenticating with Untappd using Selenium ({args.browser})...")
     driver = None
+    headless = not (args.headed or args.debug)
     try:
         driver = selenium_login(
             args.username,
             args.password,
-            headless=not args.headed,
+            headless=headless,
             browser=args.browser,
         )
         selenium_save_credentials(args.username, args.password)
@@ -535,12 +547,13 @@ def handle_selenium_fetch(args):
 
     target_user = args.username or creds["username"]
     driver = None
+    headless = not (args.headed or args.debug)
     try:
         print(f"Launching Selenium browser ({args.browser})...")
         driver = selenium_login(
             creds["username"],
             creds["password"],
-            headless=not args.headed,
+            headless=headless,
             browser=args.browser,
         )
         print(f"Fetching check-ins from {target_user}...")

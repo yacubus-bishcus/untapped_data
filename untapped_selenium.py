@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Optional
@@ -63,6 +64,13 @@ def create_driver(headless: bool = True, browser: str = "firefox") -> webdriver.
         options = webdriver.ChromeOptions()
     else:
         options = webdriver.FirefoxOptions()
+        firefox_binary = shutil.which("firefox")
+        if firefox_binary:
+            options.binary_location = firefox_binary
+        else:
+            raise RuntimeError(
+                "Firefox browser binary not found. Install Firefox or rerun with '--browser chrome'."
+            )
 
     if headless:
         options.add_argument("--headless")
