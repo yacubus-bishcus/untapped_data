@@ -166,6 +166,7 @@ Examples:
   python run.py selenium-login --username YOUR_USERNAME --password YOUR_PASSWORD --browser chrome --debug
   python run.py selenium-fetch --browser chrome --output checkins.csv
   python run.py selenium-manual-fetch --username YOUR_USERNAME --browser chrome --output checkins.csv
+  python run.py selenium-manual-fetch --username YOUR_USERNAME --browser chrome --attach-debugger 127.0.0.1:9222 --output checkins.csv
 
   # Login to Untappd API (if you have a commercial account)
   python run.py login --client-id YOUR_ID --client-secret YOUR_SECRET
@@ -292,6 +293,10 @@ Examples:
         type=int,
         default=300,
         help="How long to wait (seconds) for you to finish manual login",
+    )
+    selenium_manual_fetch_parser.add_argument(
+        "--attach-debugger",
+        help="Attach to an existing Chrome instance (example: 127.0.0.1:9222)",
     )
 
     # Original API login command
@@ -662,7 +667,11 @@ def handle_selenium_manual_fetch(args):
     driver = None
     try:
         print(f"Launching Selenium browser ({args.browser}) for manual login...")
-        driver = selenium_start_manual_login(browser=args.browser, headless=False)
+        driver = selenium_start_manual_login(
+            browser=args.browser,
+            headless=False,
+            attach_debugger=args.attach_debugger,
+        )
         selenium_wait_for_manual_login(driver, timeout=args.timeout)
 
         print(f"Fetching check-ins from {args.username}...")

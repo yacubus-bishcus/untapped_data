@@ -79,7 +79,10 @@ def create_driver(headless: bool = True, browser: str = "firefox") -> webdriver.
     if browser == "firefox":
         options.set_preference("dom.webdriver.enabled", False)
         options.set_preference("useAutomationExtension", False)
-    options.add_argument("--disable-blink-features=AutomationControlled")
+    else:
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+        options.add_argument("--disable-blink-features=AutomationControlled")
 
     # Set a realistic user agent
     options.add_argument(
@@ -99,6 +102,17 @@ def create_driver(headless: bool = True, browser: str = "firefox") -> webdriver.
         raise
 
     return driver
+
+
+def create_chrome_driver_from_debugger(debugger_address: str) -> webdriver.Remote:
+    """
+    Attach Selenium to an already-running local Chrome instance.
+    This allows manual login/CAPTCHA handling in a real browser profile first.
+    """
+    options = webdriver.ChromeOptions()
+    options.add_experimental_option("debuggerAddress", debugger_address)
+    service = ChromeService(ChromeDriverManager().install())
+    return webdriver.Chrome(service=service, options=options)
 
 
 def login(
@@ -178,11 +192,20 @@ def login(
 def start_manual_login(
     browser: str = "firefox",
     headless: bool = False,
+    attach_debugger: Optional[str] = None,
 ) -> webdriver.Remote:
     """
     Start a browser session for manual Untappd login.
     Caller is responsible for completing login interactively.
     """
+    if attach_debugger:
+        if browser != "chrome":
+            raise ValueError("--attach-debugger is only supported with Chrome.")
+        print(f"Attaching to Chrome debugger at {attach_debugger}...")
+        driver = create_chrome_driver_from_debugger(attach_debugger)
+        print("Attached to existing Chrome instance. You can complete login/CAPTCHA there.")
+        return driver
+
     if headless:
         raise ValueError("Manual login requires a visible browser window. Run without headless mode.")
 

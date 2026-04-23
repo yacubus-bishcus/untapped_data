@@ -70,6 +70,11 @@ python run.py selenium-fetch --browser chrome --headed --output-dir ./charts
 
 # Keep login fully manual (good for CAPTCHA/2FA), then automate scraping after login
 python run.py selenium-manual-fetch --username YOUR_USERNAME --browser chrome --output my_checkins.csv
+
+# If CAPTCHA still blocks Selenium-launched Chrome, login first in a real Chrome window:
+#   google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/untappd-manual
+# then attach Selenium to that live browser
+python run.py selenium-manual-fetch --username YOUR_USERNAME --browser chrome --attach-debugger 127.0.0.1:9222 --output my_checkins.csv
 ```
 
 4. View the results in Streamlit:
