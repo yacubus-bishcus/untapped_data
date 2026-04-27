@@ -78,6 +78,7 @@ The beer export is saved with these columns:
 
 - `selenium-fetch-beers` clicks the page's `Show More` control until it reaches the backstop total or no more items load.
 - During export, Selenium now visits each unique producer page once and tries to extract the producer's city/state into `Location`.
+- Producer locations are cached locally in `producer_location_cache.json`
 - If `my_beers.csv` already exists, its current row count becomes the default backstop total unless you pass `--backstop-total`.
 - `python3 run.py` opens Streamlit immediately when `my_beers.csv` already exists. Pass `--update` to refresh from Untappd first.
 - The Streamlit app reads `my_beers.csv` by default.

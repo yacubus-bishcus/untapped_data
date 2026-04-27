@@ -5,11 +5,13 @@ import shutil
 import socket
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.request import urlopen
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
@@ -24,10 +26,15 @@ from webdriver_manager.firefox import GeckoDriverManager
 UNTAPPD_BASE = "https://untappd.com"
 CREDENTIALS_FILE = ".untappd_credentials_selenium"
 BROWSER_CHOICES = {"firefox", "chrome"}
+PRODUCER_LOCATION_CACHE_FILE = "producer_location_cache.json"
 
 
 def get_credentials_path():
     return Path.home() / ".untappd" / CREDENTIALS_FILE
+
+
+def get_producer_location_cache_path():
+    return Path(__file__).resolve().parent / PRODUCER_LOCATION_CACHE_FILE
 
 
 def ensure_credentials_dir():
@@ -55,6 +62,24 @@ def load_credentials() -> dict:
         return {}
     with open(cred_path, "r") as f:
         return json.load(f)
+
+
+def load_producer_location_cache() -> dict:
+    cache_path = get_producer_location_cache_path()
+    if not cache_path.exists():
+        return {}
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_producer_location_cache(cache: dict):
+    cache_path = get_producer_location_cache_path()
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(cache, f, indent=2, ensure_ascii=False, sort_keys=True)
 
 
 def create_driver(headless: bool = True, browser: str = "firefox") -> webdriver.Remote:
@@ -325,10 +350,10 @@ def fetch_beers(
     driver.get(url)
     time.sleep(2)
 
-    previous_count = -1
-    stable_rounds = 0
-
     for click_num in range(1, max_clicks + 1):
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1.0)
+
         soup = BeautifulSoup(driver.page_source, "html.parser")
         items = find_beer_items(soup)
         current_count = len(items)
@@ -338,23 +363,22 @@ def fetch_beers(
             print(f"Reached backstop total of {backstop_total} beers.")
             break
 
-        if current_count == previous_count:
-            stable_rounds += 1
-        else:
-            stable_rounds = 0
-            previous_count = current_count
-
-        if stable_rounds >= 3 and not click_show_more(driver):
-            break
-
         if click_show_more(driver):
-            time.sleep(1.5)
-            continue
+            if wait_for_beer_count_increase(driver, current_count, timeout=12):
+                continue
+            print("Show More was clicked, but the beer count did not increase yet.")
 
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1.5)
 
-        if stable_rounds >= 3:
+        refreshed_soup = BeautifulSoup(driver.page_source, "html.parser")
+        refreshed_count = len(find_beer_items(refreshed_soup))
+        if refreshed_count > current_count:
+            print(f"After scrolling, found {refreshed_count} beer entries...")
+            continue
+
+        if not has_show_more(driver):
+            print("No more beers found and Show More is no longer available.")
             break
 
     final_soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -410,32 +434,85 @@ def find_beer_items(soup: BeautifulSoup):
 def click_show_more(driver: webdriver.Remote) -> bool:
     """Click the page's Show More control if it is available."""
     show_more_xpaths = [
-        "//a[normalize-space()='Show More']",
-        "//button[normalize-space()='Show More']",
-        "//*[self::a or self::button][contains(normalize-space(), 'Show More')]",
+        "//*[contains(normalize-space(), 'Show More')]",
     ]
 
     for xpath in show_more_xpaths:
         try:
-            button = WebDriverWait(driver, 2).until(
-                EC.presence_of_element_located((By.XPATH, xpath))
-            )
-        except TimeoutException:
-            continue
+            elements = driver.find_elements(By.XPATH, xpath)
+        except Exception:
+            elements = []
 
-        try:
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
-            time.sleep(0.5)
-            if not button.is_displayed():
+        for button in reversed(elements):
+            try:
+                text = (button.text or "").strip().lower()
+                if "show more" not in text:
+                    continue
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+                time.sleep(0.5)
+                if not button.is_displayed():
+                    continue
+                try:
+                    if hasattr(button, "is_enabled") and not button.is_enabled():
+                        continue
+                except Exception:
+                    pass
+                driver.execute_script("arguments[0].click();", button)
+                print("Clicked Show More...")
+                return True
+            except Exception:
                 continue
-            if not button.is_enabled():
-                continue
-            driver.execute_script("arguments[0].click();", button)
-            print("Clicked Show More...")
+
+    try:
+        clicked = driver.execute_script(
+            """
+            const nodes = Array.from(document.querySelectorAll('*'))
+              .filter(node => (node.innerText || '').trim().toLowerCase() === 'show more');
+            const target = nodes[nodes.length - 1];
+            if (!target) return false;
+            target.scrollIntoView({block: 'center'});
+            target.click();
+            return true;
+            """
+        )
+        if clicked:
+            print("Clicked Show More via JavaScript fallback...")
             return True
+    except Exception:
+        pass
+
+    return False
+
+
+def has_show_more(driver: webdriver.Remote) -> bool:
+    """Return True if a Show More control is currently visible."""
+    show_more_xpaths = [
+        "//*[contains(normalize-space(), 'Show More')]",
+    ]
+    for xpath in show_more_xpaths:
+        try:
+            elements = driver.find_elements(By.XPATH, xpath)
+            for button in elements:
+                text = (button.text or "").strip().lower()
+                if "show more" in text and button.is_displayed():
+                    return True
         except Exception:
             continue
+    return False
 
+
+def wait_for_beer_count_increase(driver: webdriver.Remote, previous_count: int, timeout: int = 8) -> bool:
+    """
+    Wait for the number of loaded beer items to increase after clicking Show More.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        current_count = len(find_beer_items(soup))
+        if current_count > previous_count:
+            print(f"Beer count increased to {current_count}.")
+            return True
+        time.sleep(0.5)
     return False
 
 
@@ -587,7 +664,7 @@ def enrich_producer_locations(driver: webdriver.Remote, df: pd.DataFrame) -> pd.
     if df.empty or "brewery_name" not in df.columns:
         return df
 
-    producer_cache = {}
+    producer_cache = load_producer_location_cache()
     unique_producers = (
         df[["brewery_name", "brewery_url"]]
         .drop_duplicates()
@@ -595,20 +672,115 @@ def enrich_producer_locations(driver: webdriver.Remote, df: pd.DataFrame) -> pd.
         .to_dict("records")
     )
 
-    for idx, producer in enumerate(unique_producers, start=1):
+    runtime_locations = {}
+    unresolved = []
+
+    for producer in unique_producers:
         producer_name = producer.get("brewery_name", "").strip()
         producer_url = producer.get("brewery_url", "").strip()
         if not producer_name or not producer_url:
-            producer_cache[producer_name] = None
             continue
+        cached_location = producer_cache.get(producer_name)
+        if cached_location:
+            runtime_locations[producer_name] = cached_location
+            continue
+        unresolved.append({"brewery_name": producer_name, "brewery_url": producer_url})
 
-        print(f"Resolving producer location {idx}/{len(unique_producers)}: {producer_name}")
-        producer_cache[producer_name] = fetch_producer_location(driver, producer_url)
-        time.sleep(0.5)
+    if unresolved:
+        print(
+            f"Resolving {len(unresolved)} producer locations "
+            f"({len(unique_producers) - len(unresolved)} loaded from local cache)..."
+        )
+
+        cookies = {cookie["name"]: cookie["value"] for cookie in driver.get_cookies()}
+        user_agent = driver.execute_script("return navigator.userAgent") or (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        )
+
+        resolved_parallel = fetch_producer_locations_parallel(
+            unresolved,
+            cookies=cookies,
+            user_agent=user_agent,
+            max_workers=4,
+        )
+
+        for producer_name, location in resolved_parallel.items():
+            if location:
+                runtime_locations[producer_name] = location
+                producer_cache[producer_name] = location
+
+        still_missing = [p for p in unresolved if not runtime_locations.get(p["brewery_name"])]
+        for idx, producer in enumerate(still_missing, start=1):
+            producer_name = producer["brewery_name"]
+            producer_url = producer["brewery_url"]
+            print(
+                f"Falling back to Selenium for producer location {idx}/{len(still_missing)}: {producer_name}"
+            )
+            location = fetch_producer_location(driver, producer_url)
+            if location:
+                runtime_locations[producer_name] = location
+                producer_cache[producer_name] = location
+            time.sleep(0.5)
+
+        save_producer_location_cache(producer_cache)
 
     enriched = df.copy()
-    enriched["producer_location"] = enriched["brewery_name"].map(producer_cache)
+    enriched["producer_location"] = enriched["brewery_name"].map(
+        lambda name: runtime_locations.get(name) or producer_cache.get(name)
+    )
     return enriched
+
+
+def fetch_producer_locations_parallel(producers, cookies: dict, user_agent: str, max_workers: int = 4) -> dict:
+    """
+    Fetch missing producer pages in parallel using lightweight HTTP requests.
+    """
+    results = {}
+    if not producers:
+        return results
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_name = {
+            executor.submit(
+                fetch_producer_location_via_http,
+                producer["brewery_url"],
+                cookies,
+                user_agent,
+            ): producer["brewery_name"]
+            for producer in producers
+        }
+        for future in as_completed(future_to_name):
+            producer_name = future_to_name[future]
+            try:
+                location = future.result()
+                if location:
+                    print(f"Resolved producer location in parallel: {producer_name} -> {location}")
+                results[producer_name] = location
+            except Exception as e:
+                print(f"Warning: Parallel producer lookup failed for {producer_name}: {e}")
+                results[producer_name] = None
+    return results
+
+
+def fetch_producer_location_via_http(producer_url: str, cookies: dict, user_agent: str) -> Optional[str]:
+    """
+    Fetch a producer page over HTTP using the current browser cookies.
+    """
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": UNTAPPD_BASE,
+    }
+    response = requests.get(
+        producer_url,
+        headers=headers,
+        cookies=cookies,
+        timeout=15,
+    )
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html.parser")
+    return extract_location_from_producer_page(soup)
 
 
 def fetch_producer_location(driver: webdriver.Remote, producer_url: str) -> Optional[str]:
