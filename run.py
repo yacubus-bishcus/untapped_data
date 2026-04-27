@@ -1,12 +1,12 @@
 import argparse
 import csv
-import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Optional
 
+from app_config import get_configured_username
 from untapped_selenium import (
     fetch_beers as selenium_fetch_beers,
     is_debugger_ready,
@@ -17,7 +17,7 @@ from untapped_selenium import (
     quit_driver,
 )
 
-DEFAULT_USERNAME = "jb2019"
+DEFAULT_USERNAME = get_configured_username("")
 DEFAULT_DEBUGGER_ADDRESS = "127.0.0.1:9222"
 DEFAULT_OUTPUT = "my_beers.csv"
 DEFAULT_USER_DATA_DIR = "/tmp/untappd-manual"
@@ -25,18 +25,15 @@ DEFAULT_USER_DATA_DIR = "/tmp/untappd-manual"
 
 def ensure_supported_python():
     version = sys.version_info
-    if (version.major, version.minor) not in {(3, 9), (3, 10)}:
+    if version.major != 3 or version.minor < 9:
         raise SystemExit(
             f"Unsupported Python version: {version.major}.{version.minor}. "
-            "Use Python 3.9 or 3.10 for this project."
+            "Use Python 3.9 or newer for this project."
         )
 
 
 def run_streamlit_app():
-    streamlit_executable = shutil.which("streamlit")
-    if streamlit_executable is None:
-        raise RuntimeError("Streamlit is not installed or not available in PATH.")
-    subprocess.run([streamlit_executable, "run", "streamlit_app.py"], check=True)
+    subprocess.run([sys.executable, "-m", "streamlit", "run", "streamlit_app.py"], check=True)
 
 
 def count_csv_rows(path: Path) -> int:
@@ -66,6 +63,11 @@ def perform_beer_fetch_workflow(
     user_data_dir: str,
     open_streamlit_after: bool,
 ):
+    if not username:
+        raise SystemExit(
+            "No Untappd username is configured yet. Please launch from the desktop starter first "
+            "or pass --username explicitly."
+        )
     output_path = Path(output)
     effective_backstop_total = resolve_backstop_total(output_path, backstop_total)
 
@@ -223,6 +225,8 @@ Examples:
 
 
 def handle_selenium_launch_chrome(args):
+    if not args.username:
+        raise SystemExit("No Untappd username is configured yet. Pass --username explicitly.")
     if args.page == "login":
         start_url = "https://untappd.com/user/login"
     else:
@@ -239,6 +243,8 @@ def handle_selenium_launch_chrome(args):
 
 
 def handle_selenium_fetch_beers(args):
+    if not args.username:
+        raise SystemExit("No Untappd username is configured yet. Pass --username explicitly.")
     output_path = Path(args.output)
     effective_backstop_total = resolve_backstop_total(output_path, args.backstop_total)
     if effective_backstop_total is not None:

@@ -1,7 +1,8 @@
 .venv
 my_beers.csv
 producer_location_cache.json
-__pycahce__
+app_config.json
+__pycache__
 *.pyc
 *.pyo
 *.pyd
