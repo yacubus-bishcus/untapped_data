@@ -1,0 +1,56 @@
+#!/bin/bash
+set -euo pipefail
+
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+DIST_DIR="$APP_DIR/dist"
+DEPLOY_DIR="$APP_DIR/deploy"
+MAC_DEPLOY_DIR="$DEPLOY_DIR/mac"
+WINDOWS_DEPLOY_DIR="$DEPLOY_DIR/windows"
+WORK_DIR="$DIST_DIR/UntappdBeerHistory"
+MAC_APP_DIR="$WORK_DIR/Untappd Beer History.app"
+MAC_CONTENTS_DIR="$MAC_APP_DIR/Contents"
+MAC_RESOURCES_DIR="$MAC_CONTENTS_DIR/Resources/app"
+MACOS_DIR="$MAC_CONTENTS_DIR/MacOS"
+WINDOWS_DIR="$WORK_DIR/Windows"
+ZIP_PATH="$DIST_DIR/UntappdBeerHistory-desktop.zip"
+
+rm -rf "$WORK_DIR"
+mkdir -p "$DIST_DIR"
+mkdir -p "$MAC_RESOURCES_DIR" "$MACOS_DIR" "$WINDOWS_DIR"
+
+cp "$APP_DIR/README.md" "$WORK_DIR/"
+cp "$APP_DIR/QUICKSTART.md" "$WORK_DIR/"
+cp "$MAC_DEPLOY_DIR/start_desktop_app.command" "$WORK_DIR/"
+
+cp "$APP_DIR/README.md" "$WINDOWS_DIR/"
+cp "$APP_DIR/QUICKSTART.md" "$WINDOWS_DIR/"
+cp "$WINDOWS_DEPLOY_DIR/start_desktop_app.bat" "$WINDOWS_DIR/"
+cp "$APP_DIR/requirements.txt" "$WINDOWS_DIR/"
+cp "$APP_DIR/run.py" "$WINDOWS_DIR/"
+cp "$APP_DIR/app_config.py" "$WINDOWS_DIR/"
+cp "$APP_DIR/desktop_launcher.py" "$WINDOWS_DIR/"
+cp "$APP_DIR/streamlit_app.py" "$WINDOWS_DIR/"
+cp "$APP_DIR/untapped.py" "$WINDOWS_DIR/"
+cp "$APP_DIR/untapped_selenium.py" "$WINDOWS_DIR/"
+cp "$APP_DIR/.gitignore" "$WINDOWS_DIR/"
+
+cp "$APP_DIR/requirements.txt" "$MAC_RESOURCES_DIR/"
+cp "$APP_DIR/run.py" "$MAC_RESOURCES_DIR/"
+cp "$APP_DIR/app_config.py" "$MAC_RESOURCES_DIR/"
+cp "$APP_DIR/desktop_launcher.py" "$MAC_RESOURCES_DIR/"
+cp "$APP_DIR/streamlit_app.py" "$MAC_RESOURCES_DIR/"
+cp "$APP_DIR/untapped.py" "$MAC_RESOURCES_DIR/"
+cp "$APP_DIR/untapped_selenium.py" "$MAC_RESOURCES_DIR/"
+cp "$APP_DIR/.gitignore" "$MAC_RESOURCES_DIR/"
+cp "$MAC_DEPLOY_DIR/Info.plist" "$MAC_CONTENTS_DIR/Info.plist"
+cp "$MAC_DEPLOY_DIR/UntappdBeerHistory" "$MACOS_DIR/UntappdBeerHistory"
+
+chmod +x "$WORK_DIR/start_desktop_app.command"
+chmod +x "$MACOS_DIR/UntappdBeerHistory"
+
+rm -f "$ZIP_PATH"
+cd "$DIST_DIR"
+zip -rq "$(basename "$ZIP_PATH")" "$(basename "$WORK_DIR")"
+
+echo "Created shareable desktop bundle:"
+echo "  $ZIP_PATH"

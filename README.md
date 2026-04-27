@@ -1,243 +1,155 @@
-# Untappd Drinks Dashboard
+# Untappd Beer History Exporter
 
-A comprehensive dashboard for visualizing your Untappd check-in data with interactive maps and statistics.
+This project exports your Untappd beer history with Selenium, saves it to `my_beers.csv`, and opens a Streamlit dashboard for reviewing the results.
 
-## Features
+Supported Python versions: `3.9+`
 
-- 🗺️ Interactive US state choropleth map showing check-in locations
-- 📊 Check-in trends over customizable time ranges (Week, Month, Year, Year-to-Date)
-- 🍺 Top beer styles by check-in volume
-- ⭐ Average ratings by serving style
-- 📱 Interactive Streamlit dashboard
-- 🔐 **Web scraping login** (no API key needed!)
-- 🔑 OAuth login to automatically fetch your Untappd data
-- 📥 Upload CSV/JSON exports from Untappd
+## Desktop Launcher
 
-## Installation
+Desktop launchers are included for both macOS and Windows:
 
-1. Clone or download this project
-2. Create a virtual environment:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Getting Started
-
-### Option 1: Web Scraping (Recommended - No API Key Required)
-
-1. Activate your virtual environment:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Scrape your Untappd data:
-   ```bash
-   # Login to your Untappd account
-   python run.py scrape-login --username YOUR_USERNAME --password YOUR_PASSWORD
-   
-   # Fetch your check-ins and generate charts
-   python run.py scrape-fetch --output-dir ./charts
-   ```
-
-### Option 1b: Selenium Browser Automation (Firefox or Chrome)
-
-Use Selenium when standard scraping is blocked and you want a real browser session.
-
-```bash
-# Login with Firefox (headless by default)
-python run.py selenium-login --username YOUR_USERNAME --password YOUR_PASSWORD --browser firefox
-
-# Or use Chrome
-python run.py selenium-login --username YOUR_USERNAME --password YOUR_PASSWORD --browser chrome
-
-# Download your check-ins
-python run.py selenium-fetch --browser firefox --output my_checkins.csv
-
-# Run with a visible browser window
-python run.py selenium-fetch --browser chrome --headed --output-dir ./charts
-
-# Keep login fully manual (good for CAPTCHA/2FA), then automate scraping after login
-python run.py selenium-manual-fetch --username YOUR_USERNAME --browser chrome --output my_checkins.csv
-
-# If CAPTCHA still blocks Selenium-launched Chrome, login first in a real Chrome window:
-#   google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/untappd-manual
-# then attach Selenium to that live browser
-python run.py selenium-manual-fetch --username YOUR_USERNAME --browser chrome --attach-debugger 127.0.0.1:9222 --output my_checkins.csv
+```text
+macOS:   Untappd Beer History.app
+Windows: start_desktop_app.bat
 ```
 
-4. View the results in Streamlit:
-   ```bash
-   python run.py streamlit
-   ```
+The packaged desktop experience works like this:
 
-### Option 2: Interactive Streamlit Dashboard
+1. Create `.venv` if needed
+2. Install dependencies
+3. Ask for the user's Untappd username on first launch and save it locally
+4. Run the first sync automatically when no `my_beers.csv` exists yet
+5. Open a desktop control window for later refreshes and dashboard access
+6. Let the user refresh beer data or open the dashboard without using Terminal or Command Prompt
 
-#### Using Web Scraping
+On macOS, the main launcher is now a native Cocoa window built with `PyObjC`, packaged inside a real `.app` bundle for Finder. The existing `start_desktop_app.command` is still included as a fallback for development or troubleshooting.
+The platform-specific launcher files live in:
 
-1. Launch the dashboard:
-   ```bash
-   python run.py streamlit
-   ```
-
-2. Select "Web Scraping" in the sidebar
-3. Enter your Untappd username and password
-4. Click "Login with Web Scraping"
-5. Click "Fetch My Check-ins (Web Scraping)" to download all your data
-
-#### Using Untappd API (Commercial Accounts Only)
-
-1. Register your app with Untappd:
-   - Visit https://untappd.com/api/dashboard
-   - Create a new app to get your Client ID and Client Secret
-
-2. Launch the dashboard:
-   ```bash
-   python run.py streamlit
-   ```
-
-3. Select "Untappd API" in the sidebar, click "Login to Untappd API", and enter your credentials
-4. Click "Fetch My Check-ins (API)" to automatically download all your check-in data
-
-#### Using CSV/JSON Export
-
-1. Export your check-ins from Untappd as CSV or JSON
-2. Launch the dashboard:
-   ```bash
-   python run.py streamlit
-   ```
-3. Select "Upload CSV/JSON" and choose your file
-4. The app will auto-detect columns; adjust if needed
-
-### Option 3: Command Line Interface
-
-#### Web Scraping (Recommended)
-
-```bash
-# Login to your Untappd account
-python3 run.py scrape-login --username YOUR_USERNAME --password YOUR_PASSWORD
-
-# Fetch check-ins and render charts
-python3 run.py scrape-fetch --output-dir ./charts
-
-# Fetch and save to CSV
-python3 run.py scrape-fetch --output my_checkins.csv
-
-# Specify a timeframe (default: Month)
-python3 run.py scrape-fetch --timeframe Year --output-dir ./charts
+```text
+deploy/mac
+deploy/windows
 ```
 
-#### Selenium (Firefox or Chrome)
+If Python is missing or older than `3.9`, the launchers prompt the user to open the official Python download page. If the macOS Python build does not include the Cocoa bridge, the app falls back to the browser-based Streamlit dashboard instead of crashing. Windows continues to use the existing Python desktop launcher flow.
+
+Note: the macOS bundle is a native `.app`, but it still runs the Python project under the hood. Windows is still distributed as a script launcher rather than a fully packaged `.exe`.
+
+## What `python run.py` Does
+
+Running `python run.py` from `apps/untapped_data` will:
+
+1. If `my_beers.csv` already exists, skip Untappd and open the Streamlit dashboard immediately.
+2. If you pass `--update`, launch Chrome with remote debugging enabled.
+3. Open `https://untappd.com/user/<configured-username>/beers`.
+4. Wait for you to finish logging in manually if needed.
+5. Click `Show More` until all beers are loaded.
+6. Save the export to `my_beers.csv`.
+7. Optionally honor `--backstop-total` if you pass one during a refresh.
+8. Open the Streamlit dashboard.
+
+Defaults:
+
+- Username: value saved in `app_config.json`
+- Debugger address: `127.0.0.1:9222`
+- Output file: `my_beers.csv`
+
+## Setup
 
 ```bash
-# Login via Selenium
-python3 run.py selenium-login --username YOUR_USERNAME --password YOUR_PASSWORD --browser firefox
-
-# Fetch with Selenium
-python3 run.py selenium-fetch --browser chrome --output my_checkins.csv
-
-# Manual login in browser, automated post-login scraping
-python3 run.py selenium-manual-fetch --username YOUR_USERNAME --browser chrome --output my_checkins.csv
+cd /Users/jacobbickus/Python_Files/apps/untapped_data
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-#### Untappd API (If you have commercial access)
+## Main Workflow
 
 ```bash
-# Login with API credentials
-python3 run.py login --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
-
-# Fetch check-ins
-python3 run.py fetch --output-dir ./charts
+python3 run.py
+python3 run.py --update
 ```
 
-#### Render Charts from CSV/JSON
+## Shareable Desktop Bundle
+
+To create a shareable desktop bundle:
 
 ```bash
-python3 run.py render --file checkins.csv --timeframe Month --output-dir ./output
+cd /Users/jacobbickus/Python_Files/apps/untapped_data
+./package_desktop_bundle.sh
 ```
 
-## Data Structure
+This creates:
 
-The app expects the following columns (auto-detected):
+```text
+dist/UntappdBeerHistory-desktop.zip
+```
 
-- **Date**: checkin_date, created_at, date, timestamp, checkin_time, time, datetime
-- **State**: state, venue_state, brewery_state, location_state, place_state
-- **Beer Style**: beer_style, style, beer_style_name, style_name
-- **Serving Style**: serving_style, serving_type, serving, beer_serving, glass_type, glass
-- **Rating**: rating, rating_score, rating_overall, beer_rating
-- **Place**: venue_name, brewery_name, place_name, location_name, venue
+The recipient can unzip it and then:
 
-## How It Works
+- on macOS, open `Untappd Beer History.app`
+- on Windows, open `Windows/start_desktop_app.bat`
 
-### Untappd API Integration
+For local fallback launching from source:
 
-The app uses Untappd's OAuth 2.0 authentication flow:
+- macOS: `deploy/mac/start_desktop_app.command`
+- Windows: `deploy/windows/start_desktop_app.bat`
 
-1. **Login**: You provide Client ID and Client Secret
-2. **OAuth Flow**: Your browser opens Untappd's auth page
-3. **Authorization Code**: You grant permission to the app
-4. **Access Token**: The app receives a token to access your data
-5. **Secure Storage**: The token is saved to `~/.untappd/.untappd_credentials`
-6. **Data Fetching**: The app fetches your check-ins via the Untappd API
+## Commands
 
-### Privacy & Security
-
-**Web Scraping:**
-- Your credentials are stored locally only on your machine
-- No API registration or external accounts needed
-- Faster setup, no commercial account required
-- Respectful rate limiting (pauses between requests)
-
-**API Access:**
-- Your credentials are never shared with anyone
-- The access token is stored locally on your machine only
-- You can revoke access anytime by removing the credentials file or logging out in the app
-- All data processing happens locally on your machine
-
-Both methods keep your data private and secure.
-
-## Troubleshooting
-
-**"Streamlit is not installed" error**
 ```bash
-pip install streamlit
+# Run the full default workflow
+python3 run.py
+
+# Force a fresh download from Untappd
+python3 run.py --update
+
+# Launch Chrome only
+python3 run.py selenium-launch-chrome
+
+# Attach to Chrome and export beers
+python3 run.py selenium-fetch-beers
+
+# Override the default row backstop
+python3 run.py selenium-fetch-beers --backstop-total 250
+
+# Open the dashboard
+python3 run.py streamlit
 ```
 
-**"No valid U.S. state information found"**
-- Make sure your CSV/JSON has a state column
-- Check that state values are US state names or codes (e.g., "California" or "CA")
+## Output Columns
 
-**Token expired or invalid**
-- Run the login command again to re-authenticate
-- Remove `~/.untappd/.untappd_credentials` and start fresh
+The beer export is saved with these columns:
 
-**Import errors**
-- Make sure you're in the virtual environment: `source .venv/bin/activate`
-- Reinstall dependencies: `pip install -r requirements.txt`
+- `Beer Name`
+- `Producer`
+- `Location`
+- `Beer Type`
+- `My Rating`
+- `Global Rating`
+- `First Date`
+- `Recent Date`
+
+## Notes
+
+- `selenium-fetch-beers` clicks the page's `Show More` control until it reaches the backstop total or no more items load.
+- During export, Selenium now visits each unique producer page once and tries to extract the producer's city/state into `Location`.
+- Producer locations are cached locally in `producer_location_cache.json`
+- `selenium-fetch-beers` uses the current row count in the output CSV as a default backstop only when you run that command directly without an explicit `--backstop-total`.
+- `python3 run.py` opens Streamlit immediately when `my_beers.csv` already exists. Pass `--update` to refresh from Untappd first.
+- The Streamlit app reads `my_beers.csv` by default.
+- Streamlit builds a global country map directly from the `Location` values in `my_beers.csv`.
 
 ## File Structure
 
-```
+```text
 untapped_data/
-├── run.py                 # CLI entry point
-├── streamlit_app.py       # Interactive Streamlit dashboard
-├── untapped.py            # Data processing & charting functions
-├── untapped_api.py        # Untappd API client & OAuth
-├── requirements.txt       # Python dependencies
-└── README.md             # This file
+├── deploy/
+│   ├── mac/
+│   └── windows/
+├── run.py
+├── streamlit_app.py
+├── untapped.py
+├── untapped_selenium.py
+├── requirements.txt
+└── my_beers.csv
 ```
-
-## License
-
-This project is provided as-is for personal use.
