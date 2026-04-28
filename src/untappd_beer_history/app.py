@@ -1,5 +1,6 @@
 import asyncio
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -7,6 +8,7 @@ import time
 import webbrowser
 from datetime import datetime
 from pathlib import Path
+from urllib.request import urlopen
 
 import toga
 from app_config import get_configured_username, set_configured_username  # noqa: E402
@@ -49,6 +51,9 @@ class UntappdBeerHistoryApp(toga.App):
         self.manager = ProcessManager()
         self.build_stamp_text = build_stamp()
         self.streamlit_thread = None
+        self.streamlit_port = None
+        self.streamlit_ready_event = threading.Event()
+        self.streamlit_error = None
         self.username_input = toga.TextInput(
             value=get_configured_username(""),
             placeholder="Untappd username",
@@ -196,29 +201,68 @@ class UntappdBeerHistoryApp(toga.App):
         except RuntimeError as exc:
             self._show_error("Task Already Running", str(exc))
 
+    def _choose_streamlit_port(self) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def _wait_for_streamlit_ready(self, timeout: float = 20.0) -> bool:
+        if self.streamlit_port is None:
+            return False
+
+        deadline = time.time() + timeout
+        health_url = f"http://127.0.0.1:{self.streamlit_port}/_stcore/health"
+        while time.time() < deadline:
+            if self.streamlit_error is not None:
+                return False
+            try:
+                with urlopen(health_url, timeout=1.0) as response:
+                    if 200 <= getattr(response, "status", 200) < 500:
+                        return True
+            except Exception:
+                time.sleep(0.25)
+        return False
+
     def _ensure_streamlit_server(self):
         if self.streamlit_thread and self.streamlit_thread.is_alive():
-            return
+            if self._wait_for_streamlit_ready():
+                return
+            if self.streamlit_error is not None:
+                raise RuntimeError(f"Streamlit failed to start: {self.streamlit_error}")
+            raise RuntimeError("Streamlit did not become ready in time.")
+
+        self.streamlit_port = self._choose_streamlit_port()
+        self.streamlit_ready_event.clear()
+        self.streamlit_error = None
 
         def streamlit_worker():
-            run_streamlit_server(
-                str(STREAMLIT_APP_PATH),
-                False,
-                [],
-                {
-                    "server.headless": True,
-                    "browser.gatherUsageStats": False,
-                    "server.port": 8501,
-                },
-            )
+            try:
+                run_streamlit_server(
+                    str(STREAMLIT_APP_PATH),
+                    False,
+                    [],
+                    {
+                        "server.headless": True,
+                        "server.address": "127.0.0.1",
+                        "browser.gatherUsageStats": False,
+                        "server.port": self.streamlit_port,
+                    },
+                )
+            except Exception as exc:
+                self.streamlit_error = str(exc)
+                self.manager.events.put(("log", f"\nStreamlit startup failed: {exc}\n"))
+                raise
 
         self.streamlit_thread = threading.Thread(target=streamlit_worker, daemon=True)
         self.streamlit_thread.start()
-        time.sleep(2)
+        if not self._wait_for_streamlit_ready():
+            if self.streamlit_error is not None:
+                raise RuntimeError(f"Streamlit failed to start: {self.streamlit_error}")
+            raise RuntimeError("Streamlit did not become ready in time.")
 
     def _open_dashboard_in_browser(self):
         self._ensure_streamlit_server()
-        webbrowser.open("http://127.0.0.1:8501")
+        webbrowser.open(f"http://127.0.0.1:{self.streamlit_port}")
 
     def open_dashboard(self, widget=None):
         self._start_task(self._open_dashboard_in_browser, "Opening dashboard...")
