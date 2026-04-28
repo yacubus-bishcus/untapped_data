@@ -22,6 +22,7 @@ Briefcase packaging:
 python3 -m venv .briefcase-venv
 source .briefcase-venv/bin/activate
 pip install briefcase
+mkdir -p .briefcase-home
 BRIEFCASE_HOME=.briefcase-home briefcase create macOS
 BRIEFCASE_HOME=.briefcase-home briefcase update macOS
 BRIEFCASE_HOME=.briefcase-home briefcase build macOS
