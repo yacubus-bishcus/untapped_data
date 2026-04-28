@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import traceback
+from typing import Callable, Optional
 from pathlib import Path
 
 from app_config import get_configured_username, set_configured_username
@@ -16,19 +17,30 @@ RUN_SCRIPT = SRC_DIR / "run.py"
 DEFAULT_OUTPUT = DEFAULT_OUTPUT_PATH
 
 
+class TaskCancelled(Exception):
+    pass
+
+
 def get_worker_python_executable() -> str:
     if BUNDLED_PYTHON_PATH and BUNDLED_PYTHON_PATH.exists():
-        return str(BUNDLED_PYTHON_PATH)
+        # In Briefcase macOS bundles, Python.framework/Python is a shared library,
+        # not a directly executable interpreter. The app stub in sys.executable is
+        # the correct entrypoint for launching bundled Python subprocesses.
+        return sys.executable
     return sys.executable
 
 
 class ProcessManager:
     def __init__(self):
         self.process = None
+        self.callable_thread = None
+        self.stop_callable: Optional[Callable[[], None]] = None
         self.events = queue.Queue()
 
     def start(self, command, status_text: str):
-        if self.process and self.process.poll() is None:
+        if (self.process and self.process.poll() is None) or (
+            self.callable_thread and self.callable_thread.is_alive()
+        ):
             raise RuntimeError("Wait for the current task to finish or stop it first.")
 
         self.events.put(("busy", True))
@@ -61,12 +73,15 @@ class ProcessManager:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def start_callable(self, worker_fn, status_text: str):
-        if self.process and self.process.poll() is None:
+    def start_callable(self, worker_fn, status_text: str, stop_fn: Optional[Callable[[], None]] = None):
+        if (self.process and self.process.poll() is None) or (
+            self.callable_thread and self.callable_thread.is_alive()
+        ):
             raise RuntimeError("Wait for the current task to finish or stop it first.")
 
         self.events.put(("busy", True))
         self.events.put(("status", status_text))
+        self.stop_callable = stop_fn
 
         manager = self
 
@@ -87,12 +102,20 @@ class ProcessManager:
                 self.events.put(("log", "\nTask finished successfully.\n"))
                 self.events.put(("status", "Ready"))
                 self.events.put(("busy", False))
+            except TaskCancelled:
+                self.events.put(("log", "\nTask stopped.\n"))
+                self.events.put(("status", "Ready"))
+                self.events.put(("busy", False))
             except Exception:
                 self.events.put(("log", f"\n{traceback.format_exc()}\n"))
                 self.events.put(("status", "Ready"))
                 self.events.put(("busy", False))
+            finally:
+                self.stop_callable = None
+                self.callable_thread = None
 
-        threading.Thread(target=worker, daemon=True).start()
+        self.callable_thread = threading.Thread(target=worker, daemon=True)
+        self.callable_thread.start()
 
     def stop(self):
         if self.process and self.process.poll() is None:
@@ -100,6 +123,14 @@ class ProcessManager:
             self.events.put(("status", "Stopping task..."))
             self.events.put(("log", "\nRequested process stop.\n"))
             return True
+        if self.callable_thread and self.callable_thread.is_alive():
+            self.events.put(("status", "Stopping task..."))
+            self.events.put(("log", "\nRequested task stop.\n"))
+            if self.stop_callable is not None:
+                self.stop_callable()
+                return True
+            self.events.put(("log", "This task does not support cooperative stop.\n"))
+            return False
         return False
 
 

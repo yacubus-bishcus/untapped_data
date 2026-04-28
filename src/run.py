@@ -4,7 +4,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from app_config import get_configured_username
 from paths import DEFAULT_OUTPUT_PATH, PROJECT_ROOT, STREAMLIT_APP_PATH
@@ -17,6 +17,7 @@ from untapped_selenium import (
     wait_for_debugger,
     quit_driver,
 )
+from desktop_launcher import TaskCancelled
 
 DEFAULT_USERNAME = get_configured_username("")
 DEFAULT_DEBUGGER_ADDRESS = "127.0.0.1:9222"
@@ -67,7 +68,15 @@ def perform_beer_fetch_workflow(
     backstop_total: Optional[int],
     user_data_dir: str,
     open_streamlit_after: bool,
+    stop_requested: Optional[Callable[[], bool]] = None,
+    on_driver_ready: Optional[Callable[[object], None]] = None,
 ):
+    stop_requested = stop_requested or (lambda: False)
+
+    def ensure_not_stopped():
+        if stop_requested():
+            raise TaskCancelled()
+
     if not username:
         raise SystemExit(
             "No Untappd username is configured yet. Please launch from the desktop starter first "
@@ -83,6 +92,7 @@ def perform_beer_fetch_workflow(
 
     launch_url = f"https://untappd.com/user/{username}/beers"
     print(f"Launching Chrome for manual login at {launch_url}...")
+    ensure_not_stopped()
     launch_chrome_with_debugger(
         debugger_address=debugger_address,
         user_data_dir=user_data_dir,
@@ -91,6 +101,7 @@ def perform_beer_fetch_workflow(
 
     driver = None
     try:
+        ensure_not_stopped()
         time.sleep(2)
         print(f"Attaching Selenium to Chrome at {debugger_address}...")
         driver = selenium_start_manual_login(
@@ -98,14 +109,19 @@ def perform_beer_fetch_workflow(
             headless=True,
             attach_debugger=debugger_address,
         )
-        selenium_wait_for_manual_login(driver, timeout=300)
+        if on_driver_ready is not None:
+            on_driver_ready(driver)
+        selenium_wait_for_manual_login(driver, timeout=300, stop_requested=stop_requested)
 
+        ensure_not_stopped()
         print(f"Fetching beer history for {username}...")
         df = selenium_fetch_beers(
             driver,
             username=username,
             backstop_total=effective_backstop_total,
+            stop_requested=stop_requested,
         )
+        ensure_not_stopped()
         output_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(output_path, index=False)
         print(f"Saved data to {output_path}")
@@ -114,6 +130,7 @@ def perform_beer_fetch_workflow(
             quit_driver(driver)
 
     if open_streamlit_after:
+        ensure_not_stopped()
         print("Opening Streamlit...")
         run_streamlit_app()
 

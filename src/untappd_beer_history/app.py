@@ -35,10 +35,12 @@ Path(os.environ["UNTAPPD_DATA_DIR"]).mkdir(parents=True, exist_ok=True)
 from desktop_launcher import (  # noqa: E402
     DEFAULT_OUTPUT,
     ProcessManager,
+    TaskCancelled,
     get_worker_python_executable,
     maybe_start_initial_sync,
     open_export_folder_path,
 )
+from untapped_selenium import quit_driver  # noqa: E402
 
 
 def build_stamp() -> str:
@@ -243,17 +245,7 @@ class UntappdBeerHistoryApp(toga.App):
     def _start_streamlit_process(self):
         command = [
             get_worker_python_executable(),
-            "-m",
-            "streamlit",
-            "run",
-            str(STREAMLIT_APP_PATH),
-            "--server.headless",
-            "true",
-            "--server.address",
-            "127.0.0.1",
-            "--browser.gatherUsageStats",
-            "false",
-            "--server.port",
+            "--streamlit-worker",
             str(self.streamlit_port),
         ]
         self.manager.events.put(("log", f"\n$ {' '.join(command)}\n"))
@@ -303,7 +295,14 @@ class UntappdBeerHistoryApp(toga.App):
         webbrowser.open(f"http://127.0.0.1:{self.streamlit_port}")
 
     def open_dashboard(self, widget=None):
-        self._start_task(self._open_dashboard_in_browser, "Opening dashboard...")
+        def stop_fn():
+            if self.streamlit_process and self.streamlit_process.poll() is None:
+                self.streamlit_process.terminate()
+
+        try:
+            self.manager.start_callable(self._open_dashboard_in_browser, "Opening dashboard...", stop_fn=stop_fn)
+        except RuntimeError as exc:
+            self._show_error("Task Already Running", str(exc))
 
     def refresh_only(self, widget=None):
         try:
@@ -312,6 +311,20 @@ class UntappdBeerHistoryApp(toga.App):
             self._show_error("Invalid Input", str(exc))
             return
 
+        stop_event = threading.Event()
+        active_driver = {"driver": None}
+
+        def stop_fn():
+            stop_event.set()
+            if self.streamlit_process and self.streamlit_process.poll() is None:
+                self.streamlit_process.terminate()
+            driver = active_driver.get("driver")
+            if driver is not None:
+                try:
+                    quit_driver(driver)
+                except Exception:
+                    pass
+
         def worker():
             perform_beer_fetch_workflow(
                 username=options["username"],
@@ -320,9 +333,14 @@ class UntappdBeerHistoryApp(toga.App):
                 backstop_total=options["backstop_total"],
                 user_data_dir=options["user_data_dir"],
                 open_streamlit_after=False,
+                stop_requested=stop_event.is_set,
+                on_driver_ready=lambda driver: active_driver.__setitem__("driver", driver),
             )
 
-        self._start_task(worker, "Refreshing beer data...")
+        try:
+            self.manager.start_callable(worker, "Refreshing beer data...", stop_fn=stop_fn)
+        except RuntimeError as exc:
+            self._show_error("Task Already Running", str(exc))
 
     def refresh_and_open(self, widget=None):
         try:
@@ -331,6 +349,20 @@ class UntappdBeerHistoryApp(toga.App):
             self._show_error("Invalid Input", str(exc))
             return
 
+        stop_event = threading.Event()
+        active_driver = {"driver": None}
+
+        def stop_fn():
+            stop_event.set()
+            if self.streamlit_process and self.streamlit_process.poll() is None:
+                self.streamlit_process.terminate()
+            driver = active_driver.get("driver")
+            if driver is not None:
+                try:
+                    quit_driver(driver)
+                except Exception:
+                    pass
+
         def worker():
             perform_beer_fetch_workflow(
                 username=options["username"],
@@ -339,10 +371,17 @@ class UntappdBeerHistoryApp(toga.App):
                 backstop_total=options["backstop_total"],
                 user_data_dir=options["user_data_dir"],
                 open_streamlit_after=False,
+                stop_requested=stop_event.is_set,
+                on_driver_ready=lambda driver: active_driver.__setitem__("driver", driver),
             )
+            if stop_event.is_set():
+                raise TaskCancelled()
             self._open_dashboard_in_browser()
 
-        self._start_task(worker, "Refreshing beer data and opening dashboard...")
+        try:
+            self.manager.start_callable(worker, "Refreshing beer data and opening dashboard...", stop_fn=stop_fn)
+        except RuntimeError as exc:
+            self._show_error("Task Already Running", str(exc))
 
     def open_export_folder(self, widget=None):
         try:
@@ -351,8 +390,13 @@ class UntappdBeerHistoryApp(toga.App):
             self._show_error("Open Folder Failed", str(exc))
 
     def stop_process(self, widget=None):
-        if not self.manager.stop():
-            self._show_error("Nothing Running", "There is no active task to stop.")
+        if self.manager.stop():
+            return
+        if self.streamlit_process and self.streamlit_process.poll() is None:
+            self.streamlit_process.terminate()
+            self.status_label.text = "Stopping dashboard..."
+            return
+        self._show_error("Nothing Running", "There is no active task to stop.")
 
 
 def main():

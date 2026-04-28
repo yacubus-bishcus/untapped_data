@@ -29,6 +29,17 @@ CREDENTIALS_FILE = ".untappd_credentials_selenium"
 BROWSER_CHOICES = {"firefox", "chrome"}
 
 
+def _stop_requested(stop_requested) -> bool:
+    return bool(stop_requested and stop_requested())
+
+
+def _raise_if_stopped(stop_requested):
+    if _stop_requested(stop_requested):
+        from desktop_launcher import TaskCancelled
+
+        raise TaskCancelled()
+
+
 def get_credentials_path():
     return Path.home() / ".untappd" / CREDENTIALS_FILE
 
@@ -327,13 +338,19 @@ def start_manual_login(
     return driver
 
 
-def wait_for_manual_login(driver: webdriver.Remote, timeout: int = 300):
+def wait_for_manual_login(driver: webdriver.Remote, timeout: int = 300, stop_requested=None):
     """
     Wait until manual login is completed by checking that we're no longer on /login.
     """
     print(f"Waiting up to {timeout} seconds for manual login to complete...")
-    WebDriverWait(driver, timeout).until(lambda d: "/login" not in d.current_url.lower())
-    print("✓ Manual login detected.")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        _raise_if_stopped(stop_requested)
+        if "/login" not in driver.current_url.lower():
+            print("✓ Manual login detected.")
+            return
+        time.sleep(0.5)
+    raise TimeoutException("Manual login was not completed before timeout.")
 
 
 def fetch_beers(
@@ -341,6 +358,7 @@ def fetch_beers(
     username: str,
     backstop_total: Optional[int] = None,
     max_clicks: int = 200,
+    stop_requested=None,
 ) -> pd.DataFrame:
     """
     Load a user's beer history page, keep clicking "Show More" until all entries are loaded,
@@ -348,10 +366,12 @@ def fetch_beers(
     """
     url = f"{UNTAPPD_BASE}/user/{username}/beers"
     print(f"Loading beer history for {username}...")
+    _raise_if_stopped(stop_requested)
     driver.get(url)
     time.sleep(2)
 
     for click_num in range(1, max_clicks + 1):
+        _raise_if_stopped(stop_requested)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1.0)
 
@@ -365,10 +385,11 @@ def fetch_beers(
             break
 
         if click_show_more(driver):
-            if wait_for_beer_count_increase(driver, current_count, timeout=12):
+            if wait_for_beer_count_increase(driver, current_count, timeout=12, stop_requested=stop_requested):
                 continue
             print("Show More was clicked, but the beer count did not increase yet.")
 
+        _raise_if_stopped(stop_requested)
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1.5)
 
@@ -386,6 +407,7 @@ def fetch_beers(
     beer_items = find_beer_items(final_soup)
     beers = []
     for item in beer_items:
+        _raise_if_stopped(stop_requested)
         parsed = parse_beer_item(item)
         if parsed:
             beers.append(parsed)
@@ -398,8 +420,7 @@ def fetch_beers(
         if date_col in df.columns:
             df[date_col] = pd.to_datetime(df[date_col], format="%m/%d/%y", errors="coerce")
 
-
-    df = enrich_producer_locations(driver, df)
+    df = enrich_producer_locations(driver, df, stop_requested=stop_requested)
 
     sort_cols = [col for col in ["recent_checkin", "first_checkin", "beer_name"] if col in df.columns]
     if sort_cols:
@@ -503,12 +524,13 @@ def has_show_more(driver: webdriver.Remote) -> bool:
     return False
 
 
-def wait_for_beer_count_increase(driver: webdriver.Remote, previous_count: int, timeout: int = 8) -> bool:
+def wait_for_beer_count_increase(driver: webdriver.Remote, previous_count: int, timeout: int = 8, stop_requested=None) -> bool:
     """
     Wait for the number of loaded beer items to increase after clicking Show More.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
+        _raise_if_stopped(stop_requested)
         soup = BeautifulSoup(driver.page_source, "html.parser")
         current_count = len(find_beer_items(soup))
         if current_count > previous_count:
@@ -659,7 +681,7 @@ def format_date_series(series):
     return series.dt.strftime("%Y-%m-%d").where(series.notna(), None)
 
 
-def enrich_producer_locations(driver: webdriver.Remote, df: pd.DataFrame) -> pd.DataFrame:
+def enrich_producer_locations(driver: webdriver.Remote, df: pd.DataFrame, stop_requested=None) -> pd.DataFrame:
     """
     Visit each unique producer page once and extract a readable city/state location.
     """
@@ -678,6 +700,7 @@ def enrich_producer_locations(driver: webdriver.Remote, df: pd.DataFrame) -> pd.
     unresolved = []
 
     for producer in unique_producers:
+        _raise_if_stopped(stop_requested)
         producer_name = producer.get("brewery_name", "").strip()
         producer_url = producer.get("brewery_url", "").strip()
         if not producer_name or not producer_url:
@@ -713,6 +736,7 @@ def enrich_producer_locations(driver: webdriver.Remote, df: pd.DataFrame) -> pd.
 
         still_missing = [p for p in unresolved if not runtime_locations.get(p["brewery_name"])]
         for idx, producer in enumerate(still_missing, start=1):
+            _raise_if_stopped(stop_requested)
             producer_name = producer["brewery_name"]
             producer_url = producer["brewery_url"]
             print(
