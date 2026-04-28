@@ -2,48 +2,63 @@
 
 This project exports your Untappd beer history with Selenium, saves it under `data/my_beers.csv`, and opens a Streamlit dashboard for reviewing the results.
 
-Supported Python versions: `3.9+`
+Source workflow Python: `3.9+`
+Briefcase packaging Python: `3.12+`
+
+## Download Options
+
+- `GitHub Releases`: best option for macOS users who just want to install the app
+- `Download ZIP`: source code only, best for development or manual local setup
 
 ## Project Layout
 
 ```text
 untapped_data/
 ├── data/
-├── deploy/
 ├── documentation/
-└── src/
+├── resources/
+├── src/
+└── pyproject.toml
 ```
 
 - `data/`: generated CSVs, local app config, and producer cache
-- `deploy/`: macOS and Windows launchers, packaging script, and app assets
 - `documentation/`: setup and usage docs
+- `resources/`: Briefcase app icon assets
 - `src/`: Python source files and `requirements.txt`
+- `pyproject.toml`: Briefcase packaging configuration
 
-## Desktop Launcher
+## Briefcase Packaging
 
-Desktop launchers are included for both macOS and Windows:
+The macOS distribution path is Briefcase.
+
+Project files for Briefcase live at:
 
 ```text
-macOS:   deploy/mac/Untappd Beer History.app
-Windows: deploy/windows/start_desktop_app.bat
+pyproject.toml
+src/untappd_beer_history/
+resources/appicon.icns
 ```
 
-The desktop flow:
+Typical macOS packaging flow:
 
-1. Creates `.venv` if needed
-2. Installs dependencies from `src/requirements.txt`
-3. Saves the Untappd username in `data/app_config.json`
-4. Runs the first sync automatically when `data/my_beers.csv` is missing
-5. Opens a desktop control window for later refreshes and dashboard access
-6. Lets the user refresh beer data or open the dashboard without using Terminal or Command Prompt
-7. Shows a loading bar while work is in progress
+```bash
+python3 -m venv .briefcase-venv
+source .briefcase-venv/bin/activate
+pip install briefcase
+BRIEFCASE_HOME=.briefcase-home briefcase create macOS
+BRIEFCASE_HOME=.briefcase-home briefcase update macOS
+BRIEFCASE_HOME=.briefcase-home briefcase build macOS
+BRIEFCASE_HOME=.briefcase-home briefcase package macOS --adhoc-sign
+```
 
-For a GitHub ZIP download on macOS:
+This produces a native app bundle and a DMG installer for local distribution and testing.
 
-1. Download the repository ZIP from GitHub
-2. Unzip it
-3. Open `deploy/mac/Untappd Beer History.app`
-4. If Gatekeeper blocks the first launch, right-click the app and choose `Open`
+Recommended retest flow after code changes:
+
+1. Rebuild with `briefcase update macOS` and `briefcase build macOS`
+2. Test the direct app bundle under `build/`
+3. Package a fresh DMG
+4. Reinstall from the new DMG if the direct bundle looks good
 
 ## Setup
 
@@ -68,21 +83,6 @@ Default behavior:
 3. Selenium exports the beer history to `data/my_beers.csv`
 4. The dashboard opens after export
 
-## Shareable Desktop Bundle
-
-To create a shareable desktop bundle:
-
-```bash
-cd /Users/jacobbickus/Python_Files/apps/untapped_data
-./deploy/package_desktop_bundle.sh
-```
-
-This creates:
-
-```text
-deploy/dist/UntappdBeerHistory-desktop.zip
-```
-
 ## Commands
 
 ```bash
@@ -105,4 +105,5 @@ python3 src/run.py streamlit
 - `src/run.py` opens Streamlit immediately when `data/my_beers.csv` already exists. Pass `--update` to refresh from Untappd first.
 - The Streamlit app reads `data/my_beers.csv` by default.
 - Producer locations are cached in `data/producer_location_cache.json`.
-- The macOS bundle is a native `.app`, but it still runs the Python project under the hood.
+- The Briefcase macOS build produces a native `.app` and DMG installer.
+- The bundled app window shows a version/build stamp so you can tell whether you are opening a fresh build or a stale installed copy.

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from app_config import get_configured_username
-from paths import DEFAULT_OUTPUT_PATH, PROJECT_ROOT
+from paths import DEFAULT_OUTPUT_PATH, PROJECT_ROOT, STREAMLIT_APP_PATH
 from untapped_selenium import (
     fetch_beers as selenium_fetch_beers,
     is_debugger_ready,
@@ -35,7 +35,7 @@ def ensure_supported_python():
 
 def run_streamlit_app():
     subprocess.run(
-        [sys.executable, "-m", "streamlit", "run", str(PROJECT_ROOT / "src" / "streamlit_app.py")],
+        [sys.executable, "-m", "streamlit", "run", str(STREAMLIT_APP_PATH)],
         check=True,
         cwd=str(PROJECT_ROOT),
     )
@@ -137,6 +137,27 @@ Examples:
         "--update",
         action="store_true",
         help="Force a fresh Untappd download even if data/my_beers.csv already exists",
+    )
+    parser.add_argument(
+        "--username",
+        default=DEFAULT_USERNAME,
+        help="Untappd username for the default python src/run.py workflow",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=DEFAULT_OUTPUT,
+        help="Output CSV path for the default python src/run.py workflow",
+    )
+    parser.add_argument(
+        "--debugger-address",
+        default=DEFAULT_DEBUGGER_ADDRESS,
+        help="Chrome debugger address for the default python src/run.py workflow",
+    )
+    parser.add_argument(
+        "--user-data-dir",
+        default=DEFAULT_USER_DATA_DIR,
+        help="Chrome profile directory for the default python src/run.py workflow",
     )
     parser.add_argument(
         "--backstop-total",

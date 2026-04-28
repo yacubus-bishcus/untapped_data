@@ -1,4 +1,5 @@
 .venv
+.DS_Store
 data/my_beers.csv
 data/producer_location_cache.json
 data/app_config.json
@@ -6,4 +7,9 @@ __pycache__
 *.pyc
 *.pyo
 *.pyd
-deploy/dist
+.briefcase-home
+.briefcase-venv
+macOS
+build
+dist
+logs

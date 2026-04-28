@@ -1,16 +1,25 @@
+import contextlib
+import io
 import queue
 import subprocess
 import sys
 import threading
+import traceback
 from pathlib import Path
 
 from app_config import get_configured_username, set_configured_username
-from paths import DEFAULT_OUTPUT_PATH, PROJECT_ROOT
+from paths import BUNDLED_PYTHON_PATH, DEFAULT_OUTPUT_PATH, PROJECT_ROOT
 
 
 SRC_DIR = Path(__file__).resolve().parent
 RUN_SCRIPT = SRC_DIR / "run.py"
 DEFAULT_OUTPUT = DEFAULT_OUTPUT_PATH
+
+
+def get_worker_python_executable() -> str:
+    if BUNDLED_PYTHON_PATH and BUNDLED_PYTHON_PATH.exists():
+        return str(BUNDLED_PYTHON_PATH)
+    return sys.executable
 
 
 class ProcessManager:
@@ -49,6 +58,39 @@ class ProcessManager:
                 self.events.put(("busy", False))
             finally:
                 self.process = None
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def start_callable(self, worker_fn, status_text: str):
+        if self.process and self.process.poll() is None:
+            raise RuntimeError("Wait for the current task to finish or stop it first.")
+
+        self.events.put(("busy", True))
+        self.events.put(("status", status_text))
+
+        manager = self
+
+        class QueueWriter(io.TextIOBase):
+            def write(self, text):
+                if text:
+                    manager.events.put(("log", text))
+                return len(text)
+
+            def flush(self):
+                return None
+
+        def worker():
+            stream = QueueWriter()
+            try:
+                with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
+                    worker_fn()
+                self.events.put(("log", "\nTask finished successfully.\n"))
+                self.events.put(("status", "Ready"))
+                self.events.put(("busy", False))
+            except Exception:
+                self.events.put(("log", f"\n{traceback.format_exc()}\n"))
+                self.events.put(("status", "Ready"))
+                self.events.put(("busy", False))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -92,8 +134,6 @@ def open_export_folder_path(output: str):
     target = Path(output).expanduser().resolve().parent
     if sys.platform == "darwin":
         subprocess.Popen(["open", str(target)])
-    elif sys.platform.startswith("win"):
-        subprocess.Popen(["explorer", str(target)])
     else:
         subprocess.Popen(["xdg-open", str(target)])
 
@@ -358,12 +398,17 @@ if PYOBJC_AVAILABLE:
                 self.output_field.setStringValue_(panel.URL().path())
 
         def openDashboard_(self, sender):
-            command = [sys.executable, str(RUN_SCRIPT), "streamlit"]
+            command = [get_worker_python_executable(), str(RUN_SCRIPT), "streamlit"]
             self._start_process(command, "Opening dashboard...")
 
         def refreshOnly_(self, sender):
             try:
-                command = [sys.executable, str(RUN_SCRIPT), "selenium-fetch-beers", *self.collect_common_args()]
+                command = [
+                    get_worker_python_executable(),
+                    str(RUN_SCRIPT),
+                    "selenium-fetch-beers",
+                    *self.collect_common_args(),
+                ]
             except ValueError as exc:
                 self.show_error("Invalid Input", str(exc))
                 return
@@ -371,7 +416,13 @@ if PYOBJC_AVAILABLE:
 
         def refreshAndOpen_(self, sender):
             try:
-                command = [sys.executable, str(RUN_SCRIPT), "run-default", *self.collect_common_args(), "--update"]
+                command = [
+                    get_worker_python_executable(),
+                    str(RUN_SCRIPT),
+                    "run-default",
+                    *self.collect_common_args(),
+                    "--update",
+                ]
             except ValueError as exc:
                 self.show_error("Invalid Input", str(exc))
                 return
@@ -491,7 +542,7 @@ class TkDesktopLauncher:
     def _choose_output(self):
         target = self.filedialog.asksaveasfilename(
             title="Choose output CSV",
-            initialdir=str(APP_DIR),
+            initialdir=str(Path(self.output_var.get()).expanduser().resolve().parent),
             initialfile=Path(self.output_var.get()).name,
             defaultextension=".csv",
             filetypes=[("CSV files", "*.csv")],
@@ -559,12 +610,17 @@ class TkDesktopLauncher:
             self.messagebox.showinfo("Task Already Running", str(exc))
 
     def open_dashboard(self):
-        command = [sys.executable, str(RUN_SCRIPT), "streamlit"]
+        command = [get_worker_python_executable(), str(RUN_SCRIPT), "streamlit"]
         self._start_process(command, "Opening dashboard...")
 
     def refresh_only(self):
         try:
-            command = [sys.executable, str(RUN_SCRIPT), "selenium-fetch-beers", *self._collect_common_args()]
+            command = [
+                get_worker_python_executable(),
+                str(RUN_SCRIPT),
+                "selenium-fetch-beers",
+                *self._collect_common_args(),
+            ]
         except ValueError as exc:
             self.messagebox.showerror("Invalid Input", str(exc))
             return
@@ -572,7 +628,13 @@ class TkDesktopLauncher:
 
     def refresh_and_open(self):
         try:
-            command = [sys.executable, str(RUN_SCRIPT), "run-default", *self._collect_common_args(), "--update"]
+            command = [
+                get_worker_python_executable(),
+                str(RUN_SCRIPT),
+                "run-default",
+                *self._collect_common_args(),
+                "--update",
+            ]
         except ValueError as exc:
             self.messagebox.showerror("Invalid Input", str(exc))
             return

@@ -1,6 +1,7 @@
 # Quick Start
 
-Supported Python versions: `3.9+`
+Source workflow Python: `3.9+`
+Briefcase packaging Python: `3.12+`
 
 ```bash
 cd /Users/jacobbickus/Python_Files/apps/untapped_data
@@ -15,12 +16,22 @@ Default behavior:
 - Exports to `data/my_beers.csv`
 - Opens Streamlit after the export finishes
 
-Desktop launchers:
+Briefcase packaging:
 
-- macOS: `deploy/mac/Untappd Beer History.app`
-- Windows: `deploy/windows/start_desktop_app.bat`
-- First launch saves the Untappd username to `data/app_config.json`
-- If macOS blocks the first launch, right-click the app and choose `Open`
+```bash
+python3 -m venv .briefcase-venv
+source .briefcase-venv/bin/activate
+pip install briefcase
+BRIEFCASE_HOME=.briefcase-home briefcase create macOS
+BRIEFCASE_HOME=.briefcase-home briefcase update macOS
+BRIEFCASE_HOME=.briefcase-home briefcase build macOS
+BRIEFCASE_HOME=.briefcase-home briefcase package macOS --adhoc-sign
+```
+
+Best install path for non-developers:
+
+- Download the DMG from `GitHub Releases`
+- Use `Download ZIP` only if you want the source code
 
 Useful commands:
 
