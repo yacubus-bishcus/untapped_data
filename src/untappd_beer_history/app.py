@@ -1,10 +1,10 @@
 import asyncio
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
-import traceback
 import webbrowser
 from datetime import datetime
 from pathlib import Path
@@ -12,9 +12,8 @@ from urllib.request import urlopen
 
 import toga
 from app_config import get_configured_username, set_configured_username  # noqa: E402
-from paths import STREAMLIT_APP_PATH  # noqa: E402
+from paths import PROJECT_ROOT, STREAMLIT_APP_PATH  # noqa: E402
 from run import DEFAULT_DEBUGGER_ADDRESS, DEFAULT_USER_DATA_DIR, perform_beer_fetch_workflow  # noqa: E402
-from streamlit.web.bootstrap import run as run_streamlit_server
 from toga.style import Pack
 from toga.style.pack import COLUMN, ROW
 
@@ -36,6 +35,7 @@ Path(os.environ["UNTAPPD_DATA_DIR"]).mkdir(parents=True, exist_ok=True)
 from desktop_launcher import (  # noqa: E402
     DEFAULT_OUTPUT,
     ProcessManager,
+    get_worker_python_executable,
     maybe_start_initial_sync,
     open_export_folder_path,
 )
@@ -52,10 +52,9 @@ class UntappdBeerHistoryApp(toga.App):
     def startup(self):
         self.manager = ProcessManager()
         self.build_stamp_text = build_stamp()
-        self.streamlit_thread = None
+        self.streamlit_process = None
         self.streamlit_port = None
         self.streamlit_ready_event = threading.Event()
-        self.streamlit_error = None
         self.username_input = toga.TextInput(
             value=get_configured_username(""),
             placeholder="Untappd username",
@@ -218,9 +217,7 @@ class UntappdBeerHistoryApp(toga.App):
             f"http://127.0.0.1:{self.streamlit_port}/",
         ]
         while time.time() < deadline:
-            if self.streamlit_error is not None:
-                return False
-            if self.streamlit_thread is not None and not self.streamlit_thread.is_alive():
+            if self.streamlit_process is not None and self.streamlit_process.poll() is not None:
                 return False
             for url in urls_to_check:
                 try:
@@ -232,17 +229,55 @@ class UntappdBeerHistoryApp(toga.App):
             time.sleep(0.25)
         return False
 
+    def _capture_streamlit_logs(self):
+        if self.streamlit_process is None or self.streamlit_process.stdout is None:
+            return
+
+        for line in self.streamlit_process.stdout:
+            self.manager.events.put(("log", line))
+
+        return_code = self.streamlit_process.poll()
+        if return_code is not None:
+            self.manager.events.put(("log", f"\nStreamlit process exited with code {return_code}.\n"))
+
+    def _start_streamlit_process(self):
+        command = [
+            get_worker_python_executable(),
+            "-m",
+            "streamlit",
+            "run",
+            str(STREAMLIT_APP_PATH),
+            "--server.headless",
+            "true",
+            "--server.address",
+            "127.0.0.1",
+            "--browser.gatherUsageStats",
+            "false",
+            "--server.port",
+            str(self.streamlit_port),
+        ]
+        self.manager.events.put(("log", f"\n$ {' '.join(command)}\n"))
+        self.streamlit_process = subprocess.Popen(
+            command,
+            cwd=str(PROJECT_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        threading.Thread(target=self._capture_streamlit_logs, daemon=True).start()
+
     def _ensure_streamlit_server(self):
-        if self.streamlit_thread and self.streamlit_thread.is_alive():
+        if self.streamlit_process and self.streamlit_process.poll() is None:
             if self._wait_for_streamlit_ready():
                 return
-            if self.streamlit_error is not None:
-                raise RuntimeError(f"Streamlit failed to start: {self.streamlit_error}")
-            raise RuntimeError("Streamlit did not become ready in time.")
+            raise RuntimeError(
+                "Streamlit did not become ready in time. "
+                f"Waited {STREAMLIT_STARTUP_TIMEOUT:.0f}s for http://127.0.0.1:{self.streamlit_port}."
+            )
 
         self.streamlit_port = self._choose_streamlit_port()
         self.streamlit_ready_event.clear()
-        self.streamlit_error = None
         self.manager.events.put(
             (
                 "log",
@@ -250,32 +285,14 @@ class UntappdBeerHistoryApp(toga.App):
                 f"(timeout {STREAMLIT_STARTUP_TIMEOUT:.0f}s)...\n",
             )
         )
-
-        def streamlit_worker():
-            try:
-                run_streamlit_server(
-                    str(STREAMLIT_APP_PATH),
-                    False,
-                    [],
-                    {
-                        "server.headless": True,
-                        "server.address": "127.0.0.1",
-                        "browser.gatherUsageStats": False,
-                        "server.port": self.streamlit_port,
-                    },
-                )
-            except BaseException as exc:
-                self.streamlit_error = "".join(
-                    traceback.format_exception(type(exc), exc, exc.__traceback__)
-                ).strip()
-                self.manager.events.put(("log", f"\nStreamlit startup failed:\n{self.streamlit_error}\n"))
-                raise
-
-        self.streamlit_thread = threading.Thread(target=streamlit_worker, daemon=True)
-        self.streamlit_thread.start()
+        self._start_streamlit_process()
         if not self._wait_for_streamlit_ready():
-            if self.streamlit_error is not None:
-                raise RuntimeError(f"Streamlit failed to start:\n{self.streamlit_error}")
+            if self.streamlit_process is not None and self.streamlit_process.poll() is not None:
+                raise RuntimeError(
+                    "Streamlit failed to start. "
+                    f"The process exited with code {self.streamlit_process.returncode}. "
+                    "Check the launcher log for the captured Streamlit output."
+                )
             raise RuntimeError(
                 "Streamlit did not become ready in time. "
                 f"Waited {STREAMLIT_STARTUP_TIMEOUT:.0f}s for http://127.0.0.1:{self.streamlit_port}."
